@@ -21,7 +21,7 @@ public:
 		std::string dbname = "postgres";
 		std::string user = "postgres";
 		std::string password = "159357";
-		int min_connections = 10;           // 最小连接数
+		int min_connections = 5;           // 最小连接数
 		int max_connections = 100;          // 最大连接数
 		int connection_timeout = 30;       // 连接超时（秒）
 		int idle_timeout = 300;            // 空闲超时（秒）

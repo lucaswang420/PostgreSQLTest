@@ -182,7 +182,7 @@ public:
 	}
 
 	// 更新方法: 使用参数化查询批量插入
-	bool batchUpdateWithParams(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithParameterized(const std::vector<CompanyRecord>& records) {
 		if (!db.beginTransaction()) return false;
 
 		bool success = true;
@@ -283,25 +283,21 @@ public:
 	}
 
 	// 更新方法: 使用CASE语句进行批量更新（更高效）
-	bool batchUpdateWithCASE(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithCASE(const std::vector<CompanyRecord>& records, size_t batchSize = 500) {
 		if (records.empty()) return true;
 
-		const size_t BATCH_SIZE = 1000; // 每批处理1000条
+		if (batchSize == 0)
+			batchSize = 500;
 		bool overallSuccess = true;
 
-		for (size_t start = 0; start < records.size(); start += BATCH_SIZE) {
-			size_t end = std::min(start + BATCH_SIZE, records.size());
+		for (size_t start = 0; start < records.size(); start += batchSize) {
+			size_t end = std::min(start + batchSize, records.size());
 			std::vector<CompanyRecord> batch(records.begin() + start, records.begin() + end);
 
 			if (!batchUpdateWithCASEImpl(batch)) {
 				overallSuccess = false;
 				// 可以选择继续处理或中断
 				break;
-			}
-
-			// 可选：输出进度
-			if (start % 5000 == 0) {
-				std::cout << "Processed " << start << " records..." << std::endl;
 			}
 		}
 
@@ -312,12 +308,11 @@ public:
 	bool batchUpdateWithTempTable(const std::vector<CompanyRecord>& records) {
 		if (records.empty()) return true;
 
-		std::string tempTable = "temp_updates_" + std::to_string(rand());
-
 		// 开始事务
 		if (!db.beginTransaction()) return false;
 
 		bool success = false;
+		std::string tempTable = "temp_updates_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
 
 		try {
 			// 1. 创建临时表
@@ -369,7 +364,6 @@ public:
 			}
 
 			success = true;
-
 		}
 		catch (const std::exception& e) {
 			std::cerr << "Temp table batch update failed: " << e.what() << std::endl;
@@ -387,7 +381,7 @@ public:
 	}
 
 	// 更新方法: 并行批量更新（复杂实现，未完成）
-	bool parallelBatchUpdate(const std::vector<CompanyRecord>& records, int threadcount = 4)
+	bool parallelBatchUpdateWithTempTable(const std::vector<CompanyRecord>& records, int threadcount = 4)
 	{
 		size_t totalRecords = records.size();
 		size_t recordsPerThread = (totalRecords + threadcount - 1) / threadcount;
@@ -412,13 +406,40 @@ public:
 		return allSuccess;
 	}
 
+	// 更新方法: 并行批量更新（复杂实现，未完成）
+	bool parallelBatchUpdateWithCASE(const std::vector<CompanyRecord>& records, int threadcount = 4)
+	{
+		size_t totalRecords = records.size();
+		size_t recordsPerThread = (totalRecords + threadcount - 1) / threadcount;
+		std::vector<std::future<bool>> futures;
+		for (int i = 0; i < threadcount; ++i) {
+			size_t startIdx = i * recordsPerThread;
+			size_t endIdx = std::min(startIdx + recordsPerThread, totalRecords);
+			if (startIdx >= endIdx) break;
+			std::vector<CompanyRecord> threadRecords(records.begin() + startIdx, records.begin() + endIdx);
+			futures.push_back(std::async(std::launch::async, [this, threadRecords]() {
+				DatabaseManager threadDb;
+				BatchOperation batchOp(threadDb);
+				return batchOp.batchUpdateWithCASE(threadRecords);
+				}));
+		}
+		bool allSuccess = true;
+		for (auto& fut : futures) {
+			if (!fut.get()) {
+				allSuccess = false;
+			}
+		}
+		return allSuccess;
+	}
+
 	private:
 		bool batchUpdateWithCASEImpl(const std::vector<CompanyRecord>& records) {
 			if (records.empty()) return true;
 
 			// 构建 CASE 语句
-			std::string sql = "UPDATE company SET "
-				"name = CASE id ";
+			std::string sql = "UPDATE company SET ";
+
+			sql += "name = CASE id ";
 			for (const auto& record : records) {
 				sql += "WHEN " + std::to_string(record.id) + " THEN '" + record.name + "' ";
 			}
@@ -454,9 +475,11 @@ public:
 		}
 };
 
-int BasicTest();
-int BatchOperationTest(int size);
-int DropTableIfExists();
+int BasicUsageTest();
+int BatchInsertTest(int size);
+int BatchUpdateTest(int size);
+int DropTable();
+int TruncateTable();
 
 int main() {
 	// 设置控制台输出代码页为UTF-8
@@ -465,232 +488,30 @@ int main() {
 	ConnectionPool::Config config;
 	ConnectionPool::create(config);
 
-	DropTableIfExists();
-	int nRet = BasicTest();
-	BatchOperationTest(100);
-	BatchOperationTest(500);
-	BatchOperationTest(1000);
-	BatchOperationTest(5000);
-	BatchOperationTest(10000);
-	BatchOperationTest(50000);
-	BatchOperationTest(100000);
-	DropTableIfExists();
-	
+	bool bBatchTest = false;
+	if (bBatchTest)
+	{
+		auto sizelist = { 10, 50, 100, 500, 1000, 5000, 10000, 50000 };
+		for (auto& size : sizelist)
+		{
+			TruncateTable();
+			BatchInsertTest(size);
+			BatchUpdateTest(size);
+		}
+	}
+	else
+	{
+		BasicUsageTest();
+		TruncateTable();
+		BatchInsertTest(100);
+	}
+	//DropTable();
 	return 0;
 }
 
-int BatchOperationTest(int size)
+int BasicUsageTest()
 {
-	//小数据量 (< 100)：使用 PQexecParams 逐条更新，简单可靠
-	//中等数据量(100 - 1000)：使用 CASE 语句 或 预处理语句
-	//大数据量(> 1000)：使用 临时表 + COPY 方法
-	//需要复杂业务逻辑：使用 PQexecParams 逐条更新，便于错误处理
-	//性能要求极高：使用 临时表 + COPY
-
-	std::cout << "\n---------------Batch Update Test(" << size << " records)--------------------\n";
-
-	try {
-		// 连接数据库
-		DatabaseManager db;
-
-		// 创建测试表
-		db.executeSQL("DROP TABLE IF EXISTS company");
-		db.executeSQL("CREATE TABLE company ("
-			"id INT PRIMARY KEY, "
-			"name TEXT NOT NULL, "
-			"age INT NOT NULL, "
-			"address CHAR(50), "
-			"salary REAL)");
-
-		BatchOperation batchExample(db);
-		{
-			// 示例: 参数化批量插入
-			std::cout << "Method 1 (Parameterized batch insert): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchInsertWithParams(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "Parameterized insert method cost " << duration_ms << " ms" << std::endl;
-		}
-		{
-			// 示例: COPY批量插入
-			std::cout << "Method 2 (COPY batch insert): ";
-
-			std::vector<CompanyRecord> copyRecords;
-			for (int i = size + 1; i <= 2 * size; ++i)
-			{
-				copyRecords.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchInsertWithCopy(copyRecords)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "COPY insert method cost " << duration_ms << " ms" << std::endl;
-		}
-		{
-			// 示例: 基本事务批量更新
-			std::cout << "Method 3 (batch UPDATEs in transaction): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "TransactionName" + std::to_string(i), 100 + (i % 30), "TransactionAddress" + std::to_string(i), 10000.0 + (i * 10) });
-			}
-			std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchUpdateWithTransaction(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "transaction UPDATE method cost " << duration_ms << " ms" << std::endl;
-		}
-		{
-			// 示例: 参数化批量更新
-			std::cout << "Method 4 (Parameterized batch UPDATE): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "ParameterizedName" + std::to_string(i), 200 + (i % 30), "ParameterizedAddress" + std::to_string(i), 20000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchUpdateWithParams(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "Parameterized UPDATE method cost " << duration_ms << " ms" << std::endl;
-		}
-		{
-			// 示例: 预处理语句批量更新
-			std::cout << "Method 5 (PreparedStatement batch UPDATE): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "PreparedName" + std::to_string(i), 600 + (i % 30), "PreparedAddress" + std::to_string(i), 60000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchUpdateWithPreparedStatement(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "PreparedStatement UPDATE method cost " << duration_ms << " ms" << std::endl;
-		}
-		if(size <= 10000)
-		{
-			// 示例: 单个CASE批量更新
-			std::cout << "Method 6 (CASE batch UPDATE): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "CASEName" + std::to_string(i), 300 + (i % 30), "CASEAddress" + std::to_string(i), 30000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchUpdateWithCASE(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "CASE method cost " << duration_ms << " ms" << std::endl;
-		}
-		{
-			// 示例: 临时表批量更新
-			std::cout << "Method 7 (TempTable+COPY batch UPDATE): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "TempTableName" + std::to_string(i), 400 + (i % 30), "TempTableAddress" + std::to_string(i), 40000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.batchUpdateWithTempTable(records)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "TempTable UPDATE method cost " << duration_ms << " ms" << std::endl;
-		}
-		if (size >= 1000)
-		{
-			// 示例: 并行批量更新
-			std::cout << "Method 8 (Parallel COPY batch UPDATE): ";
-
-			std::vector<CompanyRecord> records;
-			for (int i = 1; i <= size; ++i)
-			{
-				records.push_back({ i, "ParallelName" + std::to_string(i), 400 + (i % 30), "ParallelAddress" + std::to_string(i), 40000.0 + (i * 10) });
-			}
-			auto start = std::chrono::high_resolution_clock::now();
-			if (batchExample.parallelBatchUpdate(records, ConnectionPool::get_instance()->get_stats().total_connections)) {
-				std::cout << "Success" << std::endl;
-			}
-			else {
-				std::cout << "Failed" << std::endl;
-			}
-			auto end = std::chrono::high_resolution_clock::now();
-			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-			std::cout << "Parallel UPDATE method cost " << duration_ms << " ms" << std::endl;
-		}
-	}
-
-	catch (const std::exception& e) {
-		std::cerr << "Error: " << e.what() << std::endl;
-		return 1;
-	}
-	return 0;
-}
-
-int DropTableIfExists()
-{
-	DatabaseManager db;
-	return db.executeSQL("DROP TABLE IF EXISTS company");
-}	
-
-int BasicTest()
-{
-	std::cout << "\n---------------PQ basic testing--------------------\n";
+	std::cout << "\n---------------PostgreSQL Basic Usage Test--------------------\n";
 
 	// 1. 连接数据库
 	PGconn* conn = PQconnectdb("dbname=postgres user=postgres password=159357 hostaddr=127.0.0.1 port=5432");
@@ -755,7 +576,7 @@ int BasicTest()
 	for (int i = 0; i < nFields; i++) {
 		printf("%-15s", PQfname(res, i));
 	}
-	printf("\n\n");
+	printf("\n");
 
 	// 打印数据行
 	for (int i = 0; i < nTuples; i++) {
@@ -858,4 +679,226 @@ int BasicTest()
 	PQfinish(conn);
 
 	return 0;
+}
+
+int BatchInsertTest(int size)
+{
+	//std::cout << "\n---------------Batch Insert Test(" << size << " records)--------------------\n";
+
+	try {
+		// 连接数据库
+		DatabaseManager db;
+
+		// 创建测试表
+		db.executeSQL("DROP TABLE IF EXISTS company");
+		db.executeSQL("CREATE TABLE company ("
+			"id INT PRIMARY KEY, "
+			"name TEXT NOT NULL, "
+			"age INT NOT NULL, "
+			"address CHAR(50), "
+			"salary REAL)");
+
+		BatchOperation batchExample(db);
+		{
+			// 示例: 参数化批量插入
+			//std::cout << "Method 1 (Parameterized batch insert): ";
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			bool bRet = batchExample.batchInsertWithParams(records);
+			/*if (bRet) {
+				std::cout << "Success" << std::endl;
+			}
+			else {
+				std::cout << "Failed" << std::endl;
+			}*/
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			//std::cout << "Parameterized insert method cost " << duration_ms << " ms" << std::endl;
+		}
+		{
+			// 示例: COPY批量插入
+			//std::cout << "Method 2 (COPY batch insert): ";
+
+			std::vector<CompanyRecord> copyRecords;
+			for (int i = size + 1; i <= 2 * size; ++i)
+			{
+				copyRecords.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			bool bRet = batchExample.batchInsertWithCopy(copyRecords);
+			/*if (bRet) {
+				std::cout << "Success" << std::endl;
+			}
+			else {
+				std::cout << "Failed" << std::endl;
+			}*/
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			//std::cout << "COPY insert method cost " << duration_ms << " ms" << std::endl;
+		}
+	}
+
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+		return 1;
+	}
+	return 0;
+}
+
+int BatchUpdateTest(int size)
+{
+	//小数据量 (< 100)：使用 PQexecParams 逐条更新，简单可靠
+	//中等数据量(100 - 1000)：使用 CASE 语句 或 预处理语句
+	//大数据量(> 1000)：使用 临时表 + COPY 方法
+	//需要复杂业务逻辑：使用 PQexecParams 逐条更新，便于错误处理
+	//性能要求极高：使用 临时表 + COPY
+
+	std::cout << "\n---------------Batch Update Test(" << size << " records)--------------------\n";
+
+	try {
+		// 连接数据库
+		DatabaseManager db;
+		BatchOperation batchExample(db);
+		
+		{
+			// 示例: 基本事务批量更新
+			std::cout << "\n1. UPDATEs in transaction..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "TransactionName" + std::to_string(i), 100 + (i % 30), "TransactionAddress" + std::to_string(i), 10000.0 + (i * 10) });
+			}
+			std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+			batchExample.batchUpdateWithTransaction(records);
+			std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "UPDATEs in transaction method cost " << duration_ms << " ms" << std::endl;
+		}
+		{
+			// 示例: 参数化批量更新
+			std::cout << "\n2. Parameterized Update..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "ParameterizedName" + std::to_string(i), 200 + (i % 30), "ParameterizedAddress" + std::to_string(i), 20000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.batchUpdateWithParameterized(records);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "Parameterized method cost " << duration_ms << " ms" << std::endl;
+		}
+		{
+			// 示例: 预处理语句批量更新
+			std::cout << "\n3. PreparedStatement Update..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "PreparedName" + std::to_string(i), 300 + (i % 30), "PreparedAddress" + std::to_string(i), 30000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.batchUpdateWithPreparedStatement(records);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "PreparedStatement method cost " << duration_ms << " ms" << std::endl;
+		}
+		if (size <= 10000)
+		{
+			// 示例: 单个CASE批量更新
+			std::cout << "\n4. CASE WHEN Update..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "CASEName" + std::to_string(i), 400 + (i % 30), "CASEAddress" + std::to_string(i), 40000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.batchUpdateWithCASE(records);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "CASE WHEN method cost " << duration_ms << " ms" << std::endl;
+		}
+		{
+			// 示例: 临时表批量更新
+			std::cout << "\n5. TempTable+COPY Update..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "TempTableName" + std::to_string(i), 500 + (i % 30), "TempTableAddress" + std::to_string(i), 50000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.batchUpdateWithTempTable(records);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "TempTable+COPY method cost " << duration_ms << " ms" << std::endl;
+		}
+		if (size >= 5000)
+		{
+			// 示例: 并行批量更新
+			std::cout << "\n6. Parallel TempTable+COPY Update..." << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "ParallelName" + std::to_string(i), 600 + (i % 30), "ParallelAddress" + std::to_string(i), 60000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.parallelBatchUpdateWithTempTable(records, ConnectionPool::get_instance()->get_stats().total_connections);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "Parallel TempTable+COPY method cost " << duration_ms << " ms" << std::endl;
+		}
+		if (size >= 5000)
+		{
+			// 示例: 并行批量更新
+			std::cout << "\n7. Parallel CASE WHEN Update... " << std::endl;;
+
+			std::vector<CompanyRecord> records;
+			for (int i = 1; i <= size; ++i)
+			{
+				records.push_back({ i, "Parallel2Name" + std::to_string(i), 700 + (i % 30), "Parallel2Address" + std::to_string(i), 70000.0 + (i * 10) });
+			}
+			auto start = std::chrono::high_resolution_clock::now();
+			batchExample.parallelBatchUpdateWithCASE(records, ConnectionPool::get_instance()->get_stats().total_connections);
+			auto end = std::chrono::high_resolution_clock::now();
+			auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+			std::cout << "Parallel CASE WHEN method cost " << duration_ms << " ms" << std::endl;
+		}
+	}
+
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+		return 1;
+	}
+	return 0;
+}
+
+int DropTable()
+{
+	DatabaseManager db;
+	return db.executeSQL("DROP TABLE IF EXISTS company");
+}
+
+int TruncateTable()
+{
+	DatabaseManager db;
+	return db.executeSQL("TRUNCATE TABLE COMPANY");
 }

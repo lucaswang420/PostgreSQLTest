@@ -353,7 +353,7 @@ void ConnectionPool::maintain_pool_size() {
 	std::lock_guard<std::mutex> lock(mutex_);
 
 	int current_total = total_connections_.load();
-	int current_idle = idle_connections_.size();
+	int current_idle = (int)idle_connections_.size();
 
 	// 如果总连接数小于最小连接数，创建新连接
 	if (current_total < config_.min_connections) {
@@ -409,8 +409,8 @@ ConnectionPool::Stats ConnectionPool::get_stats() const {
 
 	Stats stats;
 	stats.total_connections = total_connections_.load();
-	stats.active_connections = active_connections_.size();
-	stats.idle_connections = idle_connections_.size();
+	stats.active_connections = (int)active_connections_.size();
+	stats.idle_connections = (int)idle_connections_.size();
 	stats.waiting_requests = waiting_requests_.load();
 
 	return stats;
