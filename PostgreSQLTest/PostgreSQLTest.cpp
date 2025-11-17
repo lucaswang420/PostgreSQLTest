@@ -56,7 +56,7 @@ ScopeGuard make_scope_guard(F&& f) {
 	return ScopeGuard(std::forward<F>(f));
 }
 
-struct CompanyRecord {
+struct EmployeeRecord {
 	int id;
 	std::string name;
 	int age;
@@ -72,7 +72,7 @@ public:
 	BatchOperation(DatabaseManager& database) : db(database) {}
 
 	// 插入方法: 使用参数化查询批量插入
-	bool batchInsertWithParams(const std::vector<CompanyRecord>& records) {
+	bool batchInsertWithParams(const std::vector<EmployeeRecord>& records) {
 		if (!db.beginTransaction()) return false;
 
 		bool success = true;
@@ -91,7 +91,7 @@ public:
 			paramValues[3] = record.address.c_str();
 			paramValues[4] = salaryBuf;
 
-			bool bRet = db.execParams("INSERT INTO company (id, name, age, address, salary) VALUES ($1, $2, $3, $4, $5)",
+			bool bRet = db.execParams("INSERT INTO EMPLOYEES (id, name, age, address, salary) VALUES ($1, $2, $3, $4, $5)",
 				5,				// 参数个数
 				paramValues,	// 参数值数组
 				0				// 结果格式：0=文本，1=二进制
@@ -111,9 +111,9 @@ public:
 	}
 
 	// 插入方法: 使用COPY命令进行批量插入（最高效的方法）
-	bool batchInsertWithCopy(const std::vector<CompanyRecord>& records) {
+	bool batchInsertWithCopy(const std::vector<EmployeeRecord>& records) {
 		// 开始COPY操作
-		bool bRet = db.executeCopy("COPY company (id, name, age, address, salary) FROM STDIN");
+		bool bRet = db.executeCopy("COPY EMPLOYEES (id, name, age, address, salary) FROM STDIN");
 		if (!bRet) {
 			return false;
 		}
@@ -153,14 +153,14 @@ public:
 	}
 
 	// 更新方法: 使用单个事务执行多个独立UPDATE
-	bool batchUpdateWithTransaction(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithTransaction(const std::vector<EmployeeRecord>& records) {
 		if (!db.beginTransaction()) {
 			return false;
 		}
 
 		bool allSuccess = true;
 		for (const auto& record : records) {
-			std::string sql = "UPDATE company SET name = '" + record.name+
+			std::string sql = "UPDATE EMPLOYEES SET name = '" + record.name+
 				"', age = " + std::to_string(record.age) + 
 				", address = '" + record.address +
 				"', salary = " + std::to_string(record.salary) +
@@ -182,7 +182,7 @@ public:
 	}
 
 	// 更新方法: 使用参数化查询批量插入
-	bool batchUpdateWithParameterized(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithParameterized(const std::vector<EmployeeRecord>& records) {
 		if (!db.beginTransaction()) return false;
 
 		bool success = true;
@@ -201,7 +201,7 @@ public:
 			paramValues[3] = record.address.c_str();
 			paramValues[4] = salaryBuf;
 
-			const char* updateSql = "UPDATE company SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
+			const char* updateSql = "UPDATE EMPLOYEES SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
 			bool bRet = db.execParams(updateSql,
 				5,				// 参数个数
 				paramValues,	// 参数值数组
@@ -223,14 +223,14 @@ public:
 	}
 
 	// 更新方法: 使用参数化查询批量插入
-	bool batchUpdateWithPreparedStatement(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithPreparedStatement(const std::vector<EmployeeRecord>& records) {
 		
 		// 生成唯一的预处理语句名称
 		std::string stmtName = "update_company_" + std::to_string(time(NULL));
 
 		// 准备预处理语句
 		const char* prepareSql = "PREPARE update_company (int, text, int, CHAR(50), NUMERIC) AS "
-			"UPDATE company SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
+			"UPDATE EMPLOYEES SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
 		if (!db.executeSQL(prepareSql)) {
 			std::cerr << "Prepare statement failed: " << db.getLastError() << std::endl;
 			return false;
@@ -261,7 +261,7 @@ public:
 			paramValues[3] = record.address.c_str();
 			paramValues[4] = salaryBuf;
 
-			const char* updateSql = "UPDATE company SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
+			const char* updateSql = "UPDATE EMPLOYEES SET name = $2, age = $3, address = $4, salary = $5 WHERE id = $1";
 			bool bRet = db.execPrepared("update_company",
 				5,				// 参数个数
 				paramValues,	// 参数值数组
@@ -283,7 +283,7 @@ public:
 	}
 
 	// 更新方法: 使用CASE语句进行批量更新（更高效）
-	bool batchUpdateWithCASE(const std::vector<CompanyRecord>& records, size_t batchSize = 500) {
+	bool batchUpdateWithCASE(const std::vector<EmployeeRecord>& records, size_t batchSize = 500) {
 		if (records.empty()) return true;
 
 		if (batchSize == 0)
@@ -292,7 +292,7 @@ public:
 
 		for (size_t start = 0; start < records.size(); start += batchSize) {
 			size_t end = std::min(start + batchSize, records.size());
-			std::vector<CompanyRecord> batch(records.begin() + start, records.begin() + end);
+			std::vector<EmployeeRecord> batch(records.begin() + start, records.begin() + end);
 
 			if (!batchUpdateWithCASEImpl(batch)) {
 				overallSuccess = false;
@@ -305,7 +305,7 @@ public:
 	}
 
 	// 更新方法: 使用临时表+COPY进行批量更新（大数据量）
-	bool batchUpdateWithTempTable(const std::vector<CompanyRecord>& records) {
+	bool batchUpdateWithTempTable(const std::vector<EmployeeRecord>& records) {
 		if (records.empty()) return true;
 
 		// 开始事务
@@ -354,10 +354,10 @@ public:
 
 			// 3. 使用 JOIN 更新目标表
 			std::string updateSql =
-				"UPDATE company SET "
+				"UPDATE EMPLOYEES SET "
 				"name = t.name, age = t.age, address = t.address, salary = t.salary "
 				"FROM " + tempTable + " t "
-				"WHERE company.id = t.id";
+				"WHERE EMPLOYEES.id = t.id";
 
 			if (!db.executeSQL(updateSql)) {
 				throw std::runtime_error("Failed to update from temp table");
@@ -381,7 +381,7 @@ public:
 	}
 
 	// 更新方法: 并行批量更新（复杂实现，未完成）
-	bool parallelBatchUpdateWithTempTable(const std::vector<CompanyRecord>& records, int threadcount = 4)
+	bool parallelBatchUpdateWithTempTable(const std::vector<EmployeeRecord>& records, int threadcount = 4)
 	{
 		size_t totalRecords = records.size();
 		size_t recordsPerThread = (totalRecords + threadcount - 1) / threadcount;
@@ -390,7 +390,7 @@ public:
 			size_t startIdx = i * recordsPerThread;
 			size_t endIdx = std::min(startIdx + recordsPerThread, totalRecords);
 			if (startIdx >= endIdx) break;
-			std::vector<CompanyRecord> threadRecords(records.begin() + startIdx, records.begin() + endIdx);
+			std::vector<EmployeeRecord> threadRecords(records.begin() + startIdx, records.begin() + endIdx);
 			futures.push_back(std::async(std::launch::async, [this, threadRecords]() {
 				DatabaseManager threadDb;
 				BatchOperation batchOp(threadDb);
@@ -407,7 +407,7 @@ public:
 	}
 
 	// 更新方法: 并行批量更新（复杂实现，未完成）
-	bool parallelBatchUpdateWithCASE(const std::vector<CompanyRecord>& records, int threadcount = 4)
+	bool parallelBatchUpdateWithCASE(const std::vector<EmployeeRecord>& records, int threadcount = 4)
 	{
 		size_t totalRecords = records.size();
 		size_t recordsPerThread = (totalRecords + threadcount - 1) / threadcount;
@@ -416,7 +416,7 @@ public:
 			size_t startIdx = i * recordsPerThread;
 			size_t endIdx = std::min(startIdx + recordsPerThread, totalRecords);
 			if (startIdx >= endIdx) break;
-			std::vector<CompanyRecord> threadRecords(records.begin() + startIdx, records.begin() + endIdx);
+			std::vector<EmployeeRecord> threadRecords(records.begin() + startIdx, records.begin() + endIdx);
 			futures.push_back(std::async(std::launch::async, [this, threadRecords]() {
 				DatabaseManager threadDb;
 				BatchOperation batchOp(threadDb);
@@ -433,11 +433,11 @@ public:
 	}
 
 	private:
-		bool batchUpdateWithCASEImpl(const std::vector<CompanyRecord>& records) {
+		bool batchUpdateWithCASEImpl(const std::vector<EmployeeRecord>& records) {
 			if (records.empty()) return true;
 
 			// 构建 CASE 语句
-			std::string sql = "UPDATE company SET ";
+			std::string sql = "UPDATE EMPLOYEES SET ";
 
 			sql += "name = CASE id ";
 			for (const auto& record : records) {
@@ -478,6 +478,7 @@ public:
 int BasicUsageTest();
 int BatchInsertTest(int size);
 int BatchUpdateTest(int size);
+int CreateTable();
 int DropTable();
 int TruncateTable();
 
@@ -491,10 +492,10 @@ int main() {
 	bool bBatchTest = false;
 	if (bBatchTest)
 	{
+		CreateTable();
 		auto sizelist = { 10, 50, 100, 500, 1000, 5000, 10000, 50000 };
 		for (auto& size : sizelist)
 		{
-			TruncateTable();
 			BatchInsertTest(size);
 			BatchUpdateTest(size);
 		}
@@ -502,10 +503,9 @@ int main() {
 	else
 	{
 		BasicUsageTest();
-		TruncateTable();
 		BatchInsertTest(100);
+		DropTable();
 	}
-	//DropTable();
 	return 0;
 }
 
@@ -514,7 +514,7 @@ int BasicUsageTest()
 	std::cout << "\n---------------PostgreSQL Basic Usage Test--------------------\n";
 
 	// 1. 连接数据库
-	PGconn* conn = PQconnectdb("dbname=postgres user=postgres password=159357 hostaddr=127.0.0.1 port=5432");
+	PGconn* conn = PQconnectdb("dbname=test user=test password=123456 hostaddr=127.0.0.1 port=5432");
 
 	if (PQstatus(conn) != CONNECTION_OK) {
 		std::cerr << "Connection to database failed: " << PQerrorMessage(conn);
@@ -525,7 +525,7 @@ int BasicUsageTest()
 
 	// 2. 创建表
 	const char* createTableSQL =
-		"CREATE TABLE IF NOT EXISTS COMPANY("
+		"CREATE TABLE IF NOT EXISTS EMPLOYEES("
 		"ID INT PRIMARY KEY     NOT NULL,"
 		"NAME           TEXT    NOT NULL,"
 		"AGE            INT     NOT NULL,"
@@ -544,7 +544,7 @@ int BasicUsageTest()
 
 	// 3. 插入数据
 	const char* insertSQL =
-		"INSERT INTO COMPANY (ID,NAME,AGE,ADDRESS,SALARY) "
+		"INSERT INTO EMPLOYEES (ID,NAME,AGE,ADDRESS,SALARY) "
 		"VALUES (1, 'Paul', 32, 'California', 25000.00 );";
 
 	res = PQexec(conn, insertSQL);
@@ -558,7 +558,7 @@ int BasicUsageTest()
 	std::cout << "Record inserted successfully" << std::endl;
 
 	// 4. 查询数据
-	const char* querySQL = "SELECT * from COMPANY";
+	const char* querySQL = "SELECT * from EMPLOYEES";
 	res = PQexec(conn, querySQL);
 
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -588,7 +588,7 @@ int BasicUsageTest()
 	PQclear(res);
 
 	// 5. 更新数据
-	const char* updateSQL = "UPDATE COMPANY SET SALARY = 30000 WHERE ID = 1";
+	const char* updateSQL = "UPDATE EMPLOYEES SET SALARY = 30000 WHERE ID = 1";
 	res = PQexec(conn, updateSQL);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
 		std::cerr << "UPDATE failed: " << PQerrorMessage(conn);
@@ -601,7 +601,7 @@ int BasicUsageTest()
 
 	{
 		// 查询数据
-		const char* querySQL = "SELECT * from COMPANY";
+		const char* querySQL = "SELECT * from EMPLOYEES";
 		res = PQexec(conn, querySQL);
 
 		if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -625,7 +625,7 @@ int BasicUsageTest()
 	}
 
 	// 6. 删除数据
-	const char* deleteSQL = "DELETE FROM COMPANY WHERE ID = 1";
+	const char* deleteSQL = "DELETE FROM EMPLOYEES WHERE ID = 1";
 	res = PQexec(conn, deleteSQL);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
 		std::cerr << "DELETE failed: " << PQerrorMessage(conn);
@@ -638,7 +638,7 @@ int BasicUsageTest()
 
 	{
 		// 查询数据
-		const char* querySQL = "SELECT * from COMPANY";
+		const char* querySQL = "SELECT * from EMPLOYEES";
 		res = PQexec(conn, querySQL);
 
 		if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -664,7 +664,7 @@ int BasicUsageTest()
 	//DROP TABLE [IF EXISTS] table_name [CASCADE | RESTRICT];
 	//CASCADE：自动删除依赖于该表的对象（如视图、外键约束等）
 	//RESTRICT：如果有任何对象依赖于该表，则拒绝删除（默认选项）
-	const char* deleteTableSQL = "DROP TABLE IF EXISTS COMPANY RESTRICT;";
+	const char* deleteTableSQL = "DROP TABLE IF EXISTS EMPLOYEES RESTRICT;";
 	res = PQexec(conn, deleteTableSQL);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
 		std::cerr << "DELETE TABLE failed: " << PQerrorMessage(conn);
@@ -690,8 +690,8 @@ int BatchInsertTest(int size)
 		DatabaseManager db;
 
 		// 创建测试表
-		db.executeSQL("DROP TABLE IF EXISTS company");
-		db.executeSQL("CREATE TABLE company ("
+		db.executeSQL("DROP TABLE IF EXISTS EMPLOYEES");
+		db.executeSQL("CREATE TABLE EMPLOYEES ("
 			"id INT PRIMARY KEY, "
 			"name TEXT NOT NULL, "
 			"age INT NOT NULL, "
@@ -703,7 +703,7 @@ int BatchInsertTest(int size)
 			// 示例: 参数化批量插入
 			//std::cout << "Method 1 (Parameterized batch insert): ";
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
@@ -725,7 +725,7 @@ int BatchInsertTest(int size)
 			// 示例: COPY批量插入
 			//std::cout << "Method 2 (COPY batch insert): ";
 
-			std::vector<CompanyRecord> copyRecords;
+			std::vector<EmployeeRecord> copyRecords;
 			for (int i = size + 1; i <= 2 * size; ++i)
 			{
 				copyRecords.push_back({ i, "Name" + std::to_string(i), 20 + (i % 30), "Address" + std::to_string(i), 30000.0 + (i * 10) });
@@ -771,7 +771,7 @@ int BatchUpdateTest(int size)
 			// 示例: 基本事务批量更新
 			std::cout << "\n1. UPDATEs in transaction..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "TransactionName" + std::to_string(i), 100 + (i % 30), "TransactionAddress" + std::to_string(i), 10000.0 + (i * 10) });
@@ -787,7 +787,7 @@ int BatchUpdateTest(int size)
 			// 示例: 参数化批量更新
 			std::cout << "\n2. Parameterized Update..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "ParameterizedName" + std::to_string(i), 200 + (i % 30), "ParameterizedAddress" + std::to_string(i), 20000.0 + (i * 10) });
@@ -803,7 +803,7 @@ int BatchUpdateTest(int size)
 			// 示例: 预处理语句批量更新
 			std::cout << "\n3. PreparedStatement Update..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "PreparedName" + std::to_string(i), 300 + (i % 30), "PreparedAddress" + std::to_string(i), 30000.0 + (i * 10) });
@@ -820,7 +820,7 @@ int BatchUpdateTest(int size)
 			// 示例: 单个CASE批量更新
 			std::cout << "\n4. CASE WHEN Update..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "CASEName" + std::to_string(i), 400 + (i % 30), "CASEAddress" + std::to_string(i), 40000.0 + (i * 10) });
@@ -836,7 +836,7 @@ int BatchUpdateTest(int size)
 			// 示例: 临时表批量更新
 			std::cout << "\n5. TempTable+COPY Update..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "TempTableName" + std::to_string(i), 500 + (i % 30), "TempTableAddress" + std::to_string(i), 50000.0 + (i * 10) });
@@ -853,7 +853,7 @@ int BatchUpdateTest(int size)
 			// 示例: 并行批量更新
 			std::cout << "\n6. Parallel TempTable+COPY Update..." << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "ParallelName" + std::to_string(i), 600 + (i % 30), "ParallelAddress" + std::to_string(i), 60000.0 + (i * 10) });
@@ -870,7 +870,7 @@ int BatchUpdateTest(int size)
 			// 示例: 并行批量更新
 			std::cout << "\n7. Parallel CASE WHEN Update... " << std::endl;;
 
-			std::vector<CompanyRecord> records;
+			std::vector<EmployeeRecord> records;
 			for (int i = 1; i <= size; ++i)
 			{
 				records.push_back({ i, "Parallel2Name" + std::to_string(i), 700 + (i % 30), "Parallel2Address" + std::to_string(i), 70000.0 + (i * 10) });
@@ -891,14 +891,28 @@ int BatchUpdateTest(int size)
 	return 0;
 }
 
+int CreateTable()
+{
+	const char* createTableSQL =
+		"CREATE TABLE IF NOT EXISTS EMPLOYEES("
+		"ID INT PRIMARY KEY     NOT NULL,"
+		"NAME           TEXT    NOT NULL,"
+		"AGE            INT     NOT NULL,"
+		"ADDRESS        CHAR(50),"
+		"SALARY         REAL);";
+
+	DatabaseManager db;
+	return db.executeSQL(createTableSQL);
+}
+
 int DropTable()
 {
 	DatabaseManager db;
-	return db.executeSQL("DROP TABLE IF EXISTS company");
+	return db.executeSQL("DROP TABLE IF EXISTS EMPLOYEES");
 }
 
 int TruncateTable()
 {
 	DatabaseManager db;
-	return db.executeSQL("TRUNCATE TABLE COMPANY");
+	return db.executeSQL("TRUNCATE TABLE EMPLOYEES");
 }

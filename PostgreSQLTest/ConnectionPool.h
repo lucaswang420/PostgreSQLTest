@@ -18,9 +18,9 @@ public:
 	struct Config {
 		std::string host = "localhost";
 		std::string port = "5432";
-		std::string dbname = "postgres";
-		std::string user = "postgres";
-		std::string password = "159357";
+		std::string dbname = "test";
+		std::string user = "test";
+		std::string password = "123456";
 		int min_connections = 5;           // 最小连接数
 		int max_connections = 100;          // 最大连接数
 		int connection_timeout = 30;       // 连接超时（秒）
